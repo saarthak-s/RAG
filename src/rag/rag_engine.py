@@ -8,6 +8,7 @@ from pathlib import Path
 
 import chromadb
 from dotenv import load_dotenv
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -43,13 +44,13 @@ class SyncRateLimiter:
         self.file = Path(state_file)
         self.rpm = rpm
         self.tpm = tpm
-
+        
         # Create the file with max limits if it doesn't exist
         if not self.file.exists():
             self._save({
-                "rem_req": self.rpm,
-                "rem_tok": self.tpm,
-                "reset_req": time.time(),
+                "rem_req": self.rpm, 
+                "rem_tok": self.tpm, 
+                "reset_req": time.time(), 
                 "reset_tok": time.time()
             })
 
@@ -61,9 +62,9 @@ class SyncRateLimiter:
             return json.loads(self.file.read_text())
         except (json.JSONDecodeError, FileNotFoundError):
             return {
-                "rem_req": self.rpm,
-                "rem_tok": self.tpm,
-                "reset_req": time.time(),
+                "rem_req": self.rpm, 
+                "rem_tok": self.tpm, 
+                "reset_req": time.time(), 
                 "reset_tok": time.time()
             }
 
@@ -71,7 +72,7 @@ class SyncRateLimiter:
         """Checks the local JSON file before making a request and sleeps if limits are hit."""
         state = self._load()
         now = time.time()
-
+        
         # 1. Check Requests Per Minute (RPM)
         if state["rem_req"] <= 0 and now < state["reset_req"]:
             sleep_time = state["reset_req"] - now + 0.1
@@ -79,7 +80,7 @@ class SyncRateLimiter:
             time.sleep(sleep_time)
             now = time.time()
             state["rem_req"], state["rem_tok"] = self.rpm, self.tpm
-
+            
         # 2. Check Tokens Per Minute (TPM)
         if state["rem_tok"] < estimated_tokens and now < state["reset_tok"]:
             sleep_time = state["reset_tok"] - now + 0.1
@@ -96,17 +97,17 @@ class SyncRateLimiter:
     def sync_from_headers(self, headers):
         """Updates the local JSON file using the API's exact truth."""
         state = self._load()
-
+        
         # Extract the ground truth directly from Groq/OpenAI headers
         rem_req = headers.get("x-ratelimit-remaining-requests")
         rem_tok = headers.get("x-ratelimit-remaining-tokens")
-
+        
         # Sync requests
         if rem_req is not None:
             state["rem_req"] = int(rem_req)
             if state["reset_req"] <= time.time():
                  state["reset_req"] = time.time() + 60
-
+                 
         # Sync tokens
         if rem_tok is not None:
             state["rem_tok"] = int(rem_tok)
@@ -149,7 +150,7 @@ class CodebaseAssistant:
 
         self.llm_client, self.model = build_llm_client()
         self.cache = DiskCache()
-
+        
         # Initialize synchronized limiter with specified hard limits
         rpm = int(os.getenv("RATE_LIMIT_RPM", "30"))
         tpm = int(os.getenv("RATE_LIMIT_TPM", "80000"))
@@ -176,10 +177,15 @@ Context:
 
 Question: {query}"""
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception_type(Exception),
+    )
     def _call_llm(self, prompt: str) -> str:
         # Estimate token usage: roughly 4 characters per token + max completion buffer
         estimated_tokens = (len(prompt) // 4) + 1024
-
+        
         # Wait before hitting the API if limits are breached
         self.limiter.wait_if_needed(estimated_tokens)
 
@@ -213,7 +219,7 @@ Question: {query}"""
                 answer_text = self._call_llm(prompt)
                 self.cache.set(prompt, answer_text)
             except Exception as e:
-                answer_text = f"API Error: {str(e)}"
+                answer_text = f"API Error after retries: {str(e)}"
 
         unique_sources = list({f"{m['file']} ({m['name']})" for m in metadata})
         return {"answer": answer_text, "sources": unique_sources}
