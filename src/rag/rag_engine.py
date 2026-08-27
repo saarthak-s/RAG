@@ -1,11 +1,37 @@
 # File: rag_engine.py
 
+import hashlib
+import json
 import os
+from pathlib import Path
 
 import chromadb
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+class DiskCache:
+    """Caches LLM responses on disk keyed by the exact prompt sent.
+    Repeating the same question during development costs zero API calls
+    after the first time."""
+
+    def __init__(self, cache_dir: str = ".llm_cache"):
+        self.dir = Path(cache_dir)
+        self.dir.mkdir(exist_ok=True)
+
+    def _key(self, prompt: str) -> Path:
+        h = hashlib.sha256(prompt.encode()).hexdigest()
+        return self.dir / f"{h}.json"
+
+    def get(self, prompt: str):
+        path = self._key(prompt)
+        if path.exists():
+            return json.loads(path.read_text())["response"]
+        return None
+
+    def set(self, prompt: str, response: str):
+        self._key(prompt).write_text(json.dumps({"response": response}))
 
 
 def build_llm_client():
@@ -40,6 +66,7 @@ class CodebaseAssistant:
             ) from e
 
         self.llm_client, self.model = build_llm_client()
+        self.cache = DiskCache()
 
         print(f"[INFO] Engine ready. Provider={os.getenv('LLM_PROVIDER', 'groq')} "
               f"Model={self.model} Chunks={self.collection.count()}")
@@ -73,10 +100,15 @@ Question: {query}"""
         chunks, metadata = self._retrieve(query)
         prompt = self._build_prompt(query, chunks, metadata)
 
-        try:
-            answer_text = self._call_llm(prompt)
-        except Exception as e:
-            answer_text = f"API Error: {str(e)}"
+        cached = self.cache.get(prompt)
+        if cached is not None:
+            answer_text = cached
+        else:
+            try:
+                answer_text = self._call_llm(prompt)
+                self.cache.set(prompt, answer_text)
+            except Exception as e:
+                answer_text = f"API Error: {str(e)}"
 
         unique_sources = list({f"{m['file']} ({m['name']})" for m in metadata})
         return {"answer": answer_text, "sources": unique_sources}
