@@ -1,0 +1,24 @@
+[project]
+name = "rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Saarthak", email = "saarthak.srivastav6@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "chromadb>=1.5.9",
+    "fastapi>=0.141.1",
+    "groq>=1.7.0",
+    "openai>=3.5.0",
+    "tenacity>=9.1.4",
+    "tiktoken>=0.14.0",
+]
+
+[project.scripts]
+rag = "rag:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
