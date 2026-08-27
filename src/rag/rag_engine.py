@@ -1,6 +1,7 @@
 # File: rag_engine.py
 
 import os
+
 import chromadb
 from dotenv import load_dotenv
 
@@ -8,7 +9,17 @@ load_dotenv()
 
 
 def build_llm_client():
-    """Builds the Groq-backed LLM client."""
+    """LLM_PROVIDER=ollama routes to a local model with no rate limit at all
+    — use this for iterative dev. LLM_PROVIDER=groq (default) uses the
+    hosted API for final testing."""
+    provider = os.getenv("LLM_PROVIDER", "groq").lower()
+
+    if provider == "ollama":
+        from openai import OpenAI
+        model = os.getenv("LLM_MODEL", "llama3.1:8b")
+        client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        return client, model
+
     from groq import Groq
     model = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
     print(f"[INFO] Using Groq API with model {model}.")
@@ -30,7 +41,8 @@ class CodebaseAssistant:
 
         self.llm_client, self.model = build_llm_client()
 
-        print(f"[INFO] Engine ready. Model={self.model} Chunks={self.collection.count()}")
+        print(f"[INFO] Engine ready. Provider={os.getenv('LLM_PROVIDER', 'groq')} "
+              f"Model={self.model} Chunks={self.collection.count()}")
 
     def _retrieve(self, query: str):
         results = self.collection.query(query_texts=[query], n_results=5)
