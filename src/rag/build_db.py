@@ -70,3 +70,26 @@ def fetch_and_chunk_repo() -> list:
             print(f"[ERROR] Failed to fetch {file}. Status: {response.status_code}")
     print(f"\nTotal chunks ready for the database: {len(chunks)}\n")
     return chunks
+
+
+def build_vector_store(chunks: list):
+    print("--- PHASE 2: Updating ChromaDB ---")
+    client_db = chromadb.PersistentClient(path="./chroma_db")
+    collection = client_db.get_or_create_collection(name="dt_api_codebase")
+
+    documents = [c["content"] for c in chunks]
+    metadatas = [c["metadata"] for c in chunks]
+    ids = [f"chunk_{i}" for i in range(len(chunks))]
+
+    # Upsert overwrites old chunks by ID instead of duplicating on re-run
+    collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
+    print(f"[COMPLETE] Safely embedded {collection.count()} total chunks into the database.")
+
+
+def main():
+    chunks = fetch_and_chunk_repo()
+    build_vector_store(chunks)
+
+
+if __name__ == "__main__":
+    main()
